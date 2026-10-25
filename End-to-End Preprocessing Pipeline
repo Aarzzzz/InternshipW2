@@ -1,0 +1,76 @@
+import numpy as np
+import pandas as pd
+from sklearn.preprocessing import MinMaxScaler, StandardScaler
+
+# Step 1: Simulate Raw Logistics Dataset with Synthetic Anomalies
+np.random.seed(42)
+n_samples = 100
+
+data = {
+    'Delivery_ID': [f'DEL-{100000 + i}' for i in range(n_samples)],
+    'Planned_Time_Hours': np.random.uniform(1.0, 12.0, n_samples),
+    'Actual_Time_Hours': np.random.uniform(1.0, 15.0, n_samples),
+    'Cargo_Weight_KG': np.random.uniform(500, 15000, n_samples),
+    'Distance_KM': np.random.uniform(50, 1200, n_samples),
+    'Fuel_Cost_USD': np.random.uniform(30, 800, n_samples),
+    'Weather_Condition': np.random.choice(['Clear', 'Rain', 'Snow', 'Fog', None], size=n_samples, p=[0.5, 0.2, 0.1, 0.1, 0.1]),
+    'Vehicle_Type': np.random.choice(['Van', 'Box Truck', 'Semi-Truck'], size=n_samples)
+}
+
+df = pd.DataFrame(data)
+
+# Inject synthetic missing values and extreme outliers
+df.loc[10:15, 'Cargo_Weight_KG'] = np.nan
+df.loc[20:22, 'Fuel_Cost_USD'] = np.nan
+df.loc[5, 'Actual_Time_Hours'] = 95.0  # Extreme operational delay outlier
+df.loc[8, 'Fuel_Cost_USD'] = 9500.0     # Sensor error outlier
+
+print("Initial Missing Value Count:")
+print(df.isnull().sum())
+
+# Step 2: Handle Missing Data (Imputation)
+# Grouped Median Imputation for Cargo Weight by Vehicle Type
+df['Cargo_Weight_KG'] = df.groupby('Vehicle_Type')['Cargo_Weight_KG'].transform(
+    lambda x: x.fillna(x.median())
+)
+
+# Overall Median Imputation for Fuel Cost
+df['Fuel_Cost_USD'] = df['Fuel_Cost_USD'].fillna(df['Fuel_Cost_USD'].median())
+
+# Categorical Mode Imputation for Weather Condition
+mode_weather = df['Weather_Condition'].mode()[0]
+df['Weather_Condition'] = df['Weather_Condition'].fillna(mode_weather)
+
+# Step 3: Outlier Treatment via IQR Capping
+num_cols_outliers = ['Actual_Time_Hours', 'Fuel_Cost_USD']
+
+for col in num_cols_outliers:
+    Q1 = df[col].quantile(0.25)
+    Q3 = df[col].quantile(0.75)
+    IQR = Q3 - Q1
+    lower_bound = Q1 - 1.5 * IQR
+    upper_bound = Q3 + 1.5 * IQR
+    
+    # Cap values outside bounds
+    df[col] = np.where(df[col] > upper_bound, upper_bound,
+               np.where(df[col] < lower_bound, lower_bound, df[col]))
+
+# Step 4: Feature Engineering
+# Calculate Delay Duration and Cost per KM
+df['Delay_Hours'] = np.maximum(0, df['Actual_Time_Hours'] - df['Planned_Time_Hours'])
+df['Cost_Per_KM'] = df['Fuel_Cost_USD'] / df['Distance_KM']
+
+# Step 5: Normalization and Standardization
+scaler_minmax = MinMaxScaler()
+scaler_standard = StandardScaler()
+
+df[['Distance_KM_Normalized', 'Cargo_Weight_Normalized']] = scaler_minmax.fit_transform(
+    df[['Distance_KM', 'Cargo_Weight_KG']]
+)
+
+df[['Fuel_Cost_Standardized', 'Delay_Standardized']] = scaler_standard.fit_transform(
+    df[['Fuel_Cost_USD', 'Delay_Hours']]
+)
+
+print("\nPipeline Execution Successful.")
+print(df[['Delivery_ID', 'Cargo_Weight_KG', 'Fuel_Cost_USD', 'Delay_Hours', 'Distance_KM_Normalized']].head())
